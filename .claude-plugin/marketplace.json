@@ -1,0 +1,14 @@
+{
+  "name": "betterprompt",
+  "owner": {
+    "name": "CodaVibe"
+  },
+  "plugins": [
+    {
+      "name": "betterprompt",
+      "source": "./",
+      "description": "/betterprompt: a pane that rewrites a prompt with Rieseberg's ambition framework"
+    }
+  ],
+  "description": "betterprompt: rewrite a prompt with Rieseberg's ambition framework, in a pane beside your Claude Code session"
+}

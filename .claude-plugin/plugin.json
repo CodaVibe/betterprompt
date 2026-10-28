@@ -1,0 +1,19 @@
+{
+  "name": "betterprompt",
+  "version": "0.6.0",
+  "description": "/betterprompt opens a pane beside your session that rewrites a prompt with Rieseberg's ambition framework (altitude, depth, range), on demand, outside the session's own conversation.",
+  "author": {
+    "name": "CodaVibe"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "ambition_prompt": {
+      "type": "string",
+      "title": "Ambition prompt",
+      "description": "Optional path to another ambition prompt; empty uses the bundled prompts/ambition.md (its Range, Altitude and Depth wording).",
+      "default": ""
+    }
+  },
+  "license": "MIT",
+  "repository": "https://github.com/CodaVibe/betterprompt"
+}
