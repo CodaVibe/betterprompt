@@ -34,7 +34,19 @@ test('section and parseReply', async () => {
   expect(section(AMBITION, '3')).toBe('3. Depth: raw data, real instruments.\n(4) an outside judge.')
   expect(section(AMBITION, '4')).toBe(undefined)
   const ok = parseReply('noise {"angles": [{"name": "depth", "why": "w"}, {"name": "speed"}], "better": " B "} tail')
-  expect(ok).toEqual({ kind: 'other', angles: [{ name: 'depth', why: 'w' }], better: 'B', questions: [], askAgent: [], assumed: [] })
+  expect(ok).toEqual({
+    kind: 'other',
+    angles: [{ name: 'depth', why: 'w' }],
+    thinking: { verbs: '', crew: [], depth: [] },
+    better: 'B',
+    outcome: '',
+    audacious: '',
+    proposed: [],
+    needs: [],
+    questions: [],
+    askAgent: [],
+    assumed: [],
+  })
   expect(parseReply('{"angles": []}')).toBe(undefined)
   expect(parseReply('not json')).toBe(undefined)
   const twice = parseReply('{"angles": [{"name": "depth", "why": "a"}, {"name": "depth", "why": "b"}], "better": "B"}')
@@ -335,6 +347,115 @@ test('answers, a picked kind and the project notes reach the next rewrite; a new
   await ui.input({ key: 'prompt', text: 'a new prompt' })
   expect(prompts[3]).not.toContain('KIND')
   expect(prompts[3]).not.toContain('ANSWERS')
+  await ui.unmount()
+})
+
+test('parseReply reads the ladder, the reasoning, proposals and needs', async () => {
+  const r = parseReply(JSON.stringify({
+    better: 'S',
+    outcome: ' O ',
+    audacious: 7,
+    proposed: [' Load in 200 ms. ', 3, 'a', 'b', 'c', 'd'],
+    needs: ['Crash reports', '', 'a', 'b', 'c', 'd'],
+    thinking: {
+      verbs: ' letting people decide ',
+      crew: [{ field: 'Short seller', does: 'hunts the weak claim' }, { field: 'no does' }, 'junk', { field: 'a', does: 'b' }, { field: 'c', does: 'd' }, { field: 'e', does: 'f' }, { field: 'g', does: 'h' }],
+      depth: { pro: 'P', raw: '', methods: 'M', judge: 'J', extra: 'X' },
+    },
+  }))
+  expect(r?.outcome).toBe('O')
+  expect(r?.audacious).toBe('')
+  expect(r?.proposed.length).toBe(4)
+  expect(r?.proposed[0]).toEqual({ text: 'Load in 200 ms.', kept: true })
+  expect(r?.needs).toEqual(['Crash reports', 'a', 'b', 'c'])
+  expect(r?.thinking.verbs).toBe('letting people decide')
+  expect(r?.thinking.crew.map(c => c.field)).toEqual(['Short seller', 'a', 'c', 'e'])
+  expect(r?.thinking.depth.map(d => d.text)).toEqual(['P', 'M', 'J'])
+  expect(parseReply('{"better": "B", "thinking": "nope"}')?.thinking).toEqual({ verbs: '', crew: [], depth: [] })
+})
+
+const LADDER = JSON.stringify({
+  kind: 'feature',
+  angles: [{ name: 'altitude', why: 'w' }],
+  thinking: { verbs: 'getting people to decide', crew: [{ field: 'Short seller', does: 'hunts the weak claim' }], depth: { pro: 'reads the raw logs' } },
+  better: 'SHARP.',
+  outcome: 'OUT.',
+  audacious: 'BOLD.',
+  proposed: ['Load in 200 ms.', 'Use a statistical model.'],
+  assumed: ['Delete old.'],
+  needs: ['Access to crash reports'],
+})
+
+test('the ladder starts at Sharper; a step and the proposals choose what Use sends; needs are never sent', async ($, on) => {
+  const filled: string[] = []
+  const copied: string[] = []
+  on('env.get', () => ({ value: '/home/t' }))
+  on('fs.read', (_, e) => SYS_FILES(String(e.path)))
+  on('model.complete', () => ({ value: { isAnswered: true, text: LADDER, usage: USAGE } }))
+  on('prompt.fill', (_, e) => {
+    filled.push(String(e.text))
+    return { isFilled: true }
+  })
+  on('ui.copy', (_, e) => {
+    copied.push(String(e.text))
+    return { value: { isCopied: true } }
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'prompt', text: 'add a report' })
+  expect((await ui.find({ type: 'Text', text: /Access to crash reports/ }))?.text).toBe('- Access to crash reports')
+  await ui.press({ key: 'use' })
+  expect(filled[0]).toBe('SHARP. Load in 200 ms. Use a statistical model.')
+  await ui.press({ key: 'rung-audacious' })
+  await ui.press({ key: 'proposed-0' })
+  await ui.press({ key: 'use' })
+  expect(filled[1]).toBe('BOLD. Use a statistical model.')
+  await ui.press({ key: 'assumed-0' })
+  await ui.press({ key: 'copy' })
+  expect(copied[0]).toBe('BOLD. Use a statistical model. Delete old.')
+  await ui.unmount()
+})
+
+test('a rerun keeps the step, a new prompt goes back to Sharper, a step left out falls back to it', async ($, on) => {
+  const filled: string[] = []
+  const replies = [LADDER, LADDER, '{"kind": "feature", "angles": [], "better": "ONLY."}', LADDER]
+  on('env.get', () => ({ value: '/home/t' }))
+  on('fs.read', (_, e) => SYS_FILES(String(e.path)))
+  on('model.complete', () => ({ value: { isAnswered: true, text: replies.shift() ?? LADDER, usage: USAGE } }))
+  on('prompt.fill', (_, e) => {
+    filled.push(String(e.text))
+    return { isFilled: true }
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'prompt', text: 'add a report' })
+  await ui.press({ key: 'rung-outcome' })
+  await ui.press({ key: 'again' })
+  await ui.press({ key: 'use' })
+  expect(filled[0]?.startsWith('OUT.')).toBe(true)
+  await ui.press({ key: 'again' })   // this reply has no Outcome
+  await ui.press({ key: 'use' })
+  expect(filled[1]).toBe('ONLY.')
+  await ui.input({ key: 'prompt', text: 'a new prompt' })
+  await ui.press({ key: 'use' })
+  expect(filled[2]?.startsWith('SHARP.')).toBe(true)
+  await ui.unmount()
+})
+
+test('the reasoning shows by default and hides on press; a reply draws neither it nor the ladder', async ($, on) => {
+  const replies = [LADDER, '{"kind": "reply", "angles": [], "better": "ok ship it"}']
+  on('env.get', () => ({ value: '/home/t' }))
+  on('fs.read', (_, e) => SYS_FILES(String(e.path)))
+  on('model.complete', () => ({ value: { isAnswered: true, text: replies.shift() ?? LADDER, usage: USAGE } }))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.input({ key: 'prompt', text: 'add a report' })
+  expect((await ui.find({ type: 'Text', text: /^getting people to decide$/ }))?.text).toBe('getting people to decide')
+  expect((await ui.find({ type: 'Text', text: /hunts the weak claim/ }))?.text).toContain('hunts the weak claim')
+  expect((await ui.find({ type: 'Text', text: /reads the raw logs/ }))?.text).toContain('reads the raw logs')
+  await ui.press({ key: 'reasoning' })
+  expect(await ui.find({ type: 'Text', text: /hunts the weak claim/ })).toBeUndefined()
+  await ui.input({ key: 'prompt', text: 'ok ship it' })
+  expect(await ui.find({ type: 'Text', text: /Reasoning/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /How far/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /fine as written/ }))?.text).toContain('fine as written')
   await ui.unmount()
 })
 

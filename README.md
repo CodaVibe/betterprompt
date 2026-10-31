@@ -11,20 +11,35 @@ You use it when you want it; nothing enters your session's conversation until yo
   main prompt box.
 - **Focus** (optional, the line under the prompt): name the aspect or idea the rewrite should be built around, such as
   "security", "cold start of the CLI" or "keep it short". It shapes which checks get added and which are left out, and
-  never makes the result longer. Enter in it reruns the current prompt; it stays for later prompts until you clear it.
+  never makes Sharper longer; asking for less returns Sharper alone. Enter in it reruns the current prompt; it stays for later prompts until you clear it.
   If it contradicts a decision your prompt states, the prompt wins and the rewrite asks you about it.
 - The rewrite first names the prompt's **kind** (bug, feature, refactor, ui, research, review, ops, other, or reply for
-  a go-ahead it leaves alone) and deepens it the way that kind needs: a bug is reproduced and gets a failing test, a
-  UI gets every state, a research question gets primary sources and stated criteria. Press **Kind** to correct it.
-- The pane shows the angles it used (only those that change the result; often one or none), each with what it adds,
-  and the better version, sized to the prompt (at most 60 words for a short one, 120 otherwise).
+  a go-ahead it leaves alone). Press **Kind** to correct it.
+- **Reasoning**: before the result it shows its thinking, so you see what you could have asked for: the request restated
+  as verbs, the crew (fields, at least one adversarial, and what each does here), and a top professional's four answers
+  (what they would do unasked, the rawest material, the real instruments, the outside judge). Press it to hide; a small,
+  precise change has none.
+- **The ladder**: up to three versions, and you press the one that **Use** and **Copy** send. It starts on Sharper:
+  - **Sharper**: the same task, deeper rather than bigger, at most 60 words for a short prompt and 120 otherwise. It names
+    no number, mechanism or tool you did not give.
+  - **Outcome**: the goal beyond the task, and how it keeps holding without you asking again.
+  - **Audacious**: what you would not have dared to ask for. It may replace the task, and says so when it does.
+
+  A go-ahead or a small, precise change gets Sharper alone, and creative work has no Outcome. Where other fields change the
+  result, a version gives each field's method to a subagent.
+- **Proposed**: goals and methods the rewrite suggests (a hard target, a real instrument, an assumption to reproduce
+  from raw data, an outside check). They are listed under the result and join whichever version you pick unless you press
+  one to drop it. They can sound unreasonable on purpose, so read them before you send.
+- **The agent will need**: what looks missing for the job (data, access, a way to reproduce). It is a to-do for you and is
+  never sent.
 - **Questions**: where your answer would change the work (root cause or quick fix, report or apply, which "system"),
   it asks, with answer chips and a field for your own. Answering is optional; **Rewrite with answers** reruns with
   them as facts, and **Again** keeps them. **Let the agent ask** moves a question into the result instead.
 - **The agent asks you**: questions that need the code read first go at the end of the result ("Once you have read the
   relevant code, and before changing anything, ask me: ..."), on by default; press one to drop it.
-- Anything else the rewrite made up rather than took from your prompt, session or project notes (a number, a tool, a
-  file, a step that changes something) is listed under it, unchecked: press one to add it to the result.
+- **Added by the rewrite**: anything that commits you to something you must own (a file it cannot see, a paid vendor, a
+  step that changes or deletes something) is listed unchecked: press one to add it to the result. Facts are never
+  invented in any version.
 - **Project snapshot**: from the session's root it sends the project's `CLAUDE.md` (a full fork already has it), the
   opening of `README.md`, the Now and Next sections of `ROADMAP.md`, the tracked files (up to 300), the branch, the last
   10 commits and the uncommitted changes. The rewrite names real files and commands instead of guessing and sets its
@@ -52,7 +67,7 @@ You use it when you want it; nothing enters your session's conversation until yo
   the session, every tool denied.
 - Instructions: `prompts/rewrite.md`, with the Altitude, Depth and Range wording read at run time from
   `prompts/ambition.md` (plugin option `ambition_prompt` points at another copy), so there is one version of it.
-  It uses every technique that changes the result. Speed is left out as Rieseberg leaves it out: doing the same work
+  The wording follows the post: facts stay grounded, while targets and methods are proposed openly. Speed is left out as Rieseberg leaves it out: doing the same work
   faster is what an agent already does.
 - `hooks/register.tsx` is the whole mod; `types/index.d.ts` is its state contract.
 

@@ -1,6 +1,6 @@
 {
   "name": "betterprompt",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "/betterprompt opens a pane beside your session that rewrites a prompt with Rieseberg's ambition framework (altitude, depth, range), on demand, outside the session's own conversation.",
   "author": {
     "name": "CodaVibe"

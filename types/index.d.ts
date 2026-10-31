@@ -12,6 +12,17 @@ export type Answer = { ask: string; answer: string }
 /** What the rewrite sees of the session: nothing, the recent messages' text, or all of it through a fork. */
 export type Context = 'off' | 'recent' | 'full'
 
+/** The ladder's steps, each a field of the done job: better is Sharper. */
+export type Rung = 'better' | 'outcome' | 'audacious'
+
+/** The reasoning shown before the rewrite; all empty for a reply or a small, precise change. */
+export type Thinking = {
+  verbs: string
+  crew: { field: string; does: string }[]
+  /** The four questions a top professional answers: `label` is how the pane names each. */
+  depth: { label: string; text: string }[]
+}
+
 export type Job =
   | { phase: 'idle' }
   | { phase: 'working' }
@@ -20,7 +31,15 @@ export type Job =
       phase: 'done'
       kind: string
       angles: Angle[]
+      thinking: Thinking
       better: string
+      /** The higher steps of the ladder; '' when the rewrite left one out. */
+      outcome: string
+      audacious: string
+      /** Goals and methods the rewrite proposes; they join the result unless dropped. */
+      proposed: Assumed[]
+      /** What the developer must give the agent first; shown, never sent. */
+      needs: string[]
       questions: Question[]
       /** Questions the agent asks after reading the code; `kept` ones join the result. */
       askAgent: Assumed[]
@@ -42,6 +61,10 @@ declare module 'claude-code' {
       picking: Shaped<boolean>
       /** The developer's free-text steer for the rewrite; kept across prompts until they clear it. */
       focus: Shaped<string>
+      /** The ladder step Use and Copy send; a new prompt starts at Sharper, a rerun keeps it. */
+      rung: Shaped<Rung>
+      /** Whether the reasoning is shown; kept across prompts. */
+      reasoning: Shaped<boolean>
     }
   }
 }

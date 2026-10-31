@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelTextBlock, PluginOptions, Register } from 'claude-code'
 
-import type { Angle, Answer, Assumed, Context, Job, Question } from '../types'
+import type { Angle, Answer, Assumed, Context, Job, Question, Rung, Thinking } from '../types'
 
 // /betterprompt opens a pane beside the session: type or paste a prompt, get its better version from a separate
 // model call (no tools; of the session it sees what the Context toggle says), then Use it (prompt box) or Copy it.
@@ -47,16 +47,25 @@ const MAX_ASSUMED = 4
 const MAX_QUESTIONS = 3
 const MAX_OPTIONS = 4
 const MAX_ASK_AGENT = 2
+const MAX_PROPOSED = 4
+const MAX_NEEDS = 4
+const MAX_CREW = 4
+// the higher steps have no word cap, so the reply can run to three versions plus the reasoning
+const MAX_TOKENS = 4000
+const RUNGS: readonly [Rung, string][] = [['better', 'Sharper'], ['outcome', 'Outcome'], ['audacious', 'Audacious']]
+const DEPTH = [['pro', 'A top pro would'], ['raw', 'Rawest material'], ['methods', 'Methods and tools'], ['judge', 'Outside judge']] as const
 // the order the kind picker shows them; rewrite.md describes each
 const KINDS = ['bug', 'feature', 'refactor', 'ui', 'research', 'review', 'ops', 'other', 'reply'] as const
 
 const draft = atom({ plugin: 'betterprompt', key: 'draft' } as const, '', { shape: 'draft-1' })
-const job = atom({ plugin: 'betterprompt', key: 'job' } as const, { phase: 'idle' } as Job, { shape: 'job-3' })
+const job = atom({ plugin: 'betterprompt', key: 'job' } as const, { phase: 'idle' } as Job, { shape: 'job-4' })
 const context = atom({ plugin: 'betterprompt', key: 'context' } as const, 'recent' as Context, { shape: 'context-1' })
 const kind = atom({ plugin: 'betterprompt', key: 'kind' } as const, '', { shape: 'kind-1' })
 const answers = atom({ plugin: 'betterprompt', key: 'answers' } as const, [] as Answer[], { shape: 'answers-1' })
 const picking = atom({ plugin: 'betterprompt', key: 'picking' } as const, false, { shape: 'picking-1' })
 const focus = atom({ plugin: 'betterprompt', key: 'focus' } as const, '', { shape: 'focus-1' })
+const rung = atom({ plugin: 'betterprompt', key: 'rung' } as const, 'better' as Rung, { shape: 'rung-1' })
+const reasoning = atom({ plugin: 'betterprompt', key: 'reasoning' } as const, true, { shape: 'reasoning-1' })
 
 /** The numbered section `n` of prompts/ambition.md (1 Range, 2 Altitude, 3 Depth), or undefined. */
 export function section(text: string, n: string): string | undefined {
@@ -104,9 +113,23 @@ type Reply = Omit<Done, 'phase' | 'note'>
 /** `s` with its first letter capitalised, as the angle names are shown. */
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
+/** `x` trimmed when it is a string, else ''. */
+const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '')
+
+/** The reply's reasoning, leaving out whatever it did not fill in. */
+function parseThinking(x: { verbs?: unknown; crew?: unknown; depth?: Record<string, unknown> } | undefined): Thinking {
+  const crew = (Array.isArray(x?.crew) ? x.crew : [])
+    .map((c: { field?: unknown; does?: unknown }) => ({ field: str(c?.field), does: str(c?.does) }))
+    .filter(c => c.field && c.does)
+    .slice(0, MAX_CREW)
+  const depth = DEPTH.map(([k, label]) => ({ label, text: str(x?.depth?.[k]) })).filter(d => d.text)
+  return { verbs: str(x?.verbs), crew, depth }
+}
+
 /**
- * The model's JSON reply, or undefined when it is not the shape asked for. Assumed additions start unkept; questions
- * for the agent start kept, as the developer would rather answer them than have the agent guess.
+ * The model's JSON reply, or undefined when it is not the shape asked for. Assumed additions start unkept; proposed
+ * goals and methods start kept, as proposing them is the point; questions for the agent start kept, as the developer
+ * would rather answer them than have the agent guess.
  */
 export function parseReply(text: string): Reply | undefined {
   const a = text.indexOf('{')
@@ -123,6 +146,7 @@ export function parseReply(text: string): Reply | undefined {
         angles.push({ name, why: String(x.why ?? '') })
     }
     const assumed = strings(o.assumed, MAX_ASSUMED).map(x => ({ text: x, kept: false }))
+    const proposed = strings(o.proposed, MAX_PROPOSED).map(x => ({ text: x, kept: true }))
     const askAgent = strings(o.ask_agent, MAX_ASK_AGENT).map(x => ({ text: x, kept: true }))
     const questions: Question[] = []
     for (const q of Array.isArray(o.questions) ? o.questions : []) {
@@ -131,7 +155,19 @@ export function parseReply(text: string): Reply | undefined {
       if (ask && options.length && questions.length < MAX_QUESTIONS) questions.push({ ask, options, picked: '' })
     }
     const k = (KINDS as readonly string[]).includes(o.kind) ? String(o.kind) : 'other'
-    return { kind: k, angles, better: o.better.trim(), questions, askAgent, assumed }
+    return {
+      kind: k,
+      angles,
+      thinking: parseThinking(o.thinking),
+      better: o.better.trim(),
+      outcome: str(o.outcome),
+      audacious: str(o.audacious),
+      proposed,
+      needs: strings(o.needs, MAX_NEEDS),
+      questions,
+      askAgent,
+      assumed,
+    }
   } catch {
     return undefined
   }
@@ -158,7 +194,7 @@ async function system($: EngineInterface): Promise<string> {
   return String(template).replace('{{techniques}}', () => techniques)
 }
 
-/** What Use and Copy send: the better version, each kept addition, then the kept questions for the agent. */
+/** What Use and Copy send: the chosen version, each kept addition, then the kept questions for the agent. */
 export function finalText(better: string, assumed: Assumed[], askAgent: Assumed[] = []): string {
   const asks = askAgent.filter(a => a.kept).map(a => a.text)
   const ask = asks.length ? `Once you have read the relevant code, and before changing anything, ask me: ${asks.join(' ')}` : ''
@@ -258,8 +294,8 @@ async function project($: EngineInterface, prompt: string, withNotes: boolean) {
 }
 
 /**
- * Rewrites `prompt`. A fresh prompt (Enter, Improve) drops the kind and answers set for the last one; Again, a picked
- * kind, a new focus and the answers' rewrite keep them. The focus stays until the developer clears its field.
+ * Rewrites `prompt`. A fresh prompt (Enter, Improve) drops the kind, answers and ladder step set for the last one; Again,
+ * a picked kind, a new focus and the answers' rewrite keep them. The focus stays until the developer clears its field.
  */
 async function improve($: EngineInterface, prompt: string, fresh = true) {
   if (!prompt.trim()) {
@@ -278,6 +314,7 @@ async function improve($: EngineInterface, prompt: string, fresh = true) {
     await update($, kind, () => '')
     await update($, answers, () => [])
     await update($, picking, () => false)
+    await update($, rung, () => 'better')
   }
   await set({ phase: 'working' })
   let sys: string
@@ -330,7 +367,7 @@ async function improve($: EngineInterface, prompt: string, fresh = true) {
     // blocks are joined as written, so the snapshot ends with the blank line between sections
     const blocks: ModelTextBlock[] = snapshot ? [{ text: `${snapshot}\n\n`, cache: true }, { text: given }] : [{ text: given }]
     r = await $.model.complete(
-      { model: MODEL, system: [{ text: sys, cache: true }], prompt: blocks, maxTokens: 2000, timeoutMs: 180000 },
+      { model: MODEL, system: [{ text: sys, cache: true }], prompt: blocks, maxTokens: MAX_TOKENS, timeoutMs: 180000 },
       { signal: mine.signal },
     )
   }
@@ -378,7 +415,12 @@ export const register: Register = (on, given) => {
     const text = await read($, draft)
     const j = await read($, job)
     const mode = await read($, context)
-    const better = j.phase === 'done' ? finalText(j.better, j.assumed, j.askAgent) : ''
+    const chosen = await read($, rung)
+    const showReasoning = await read($, reasoning)
+    // a rerun can leave out the step that was chosen; then it falls back to Sharper, which is always there
+    const shownRung: Rung = j.phase === 'done' && j[chosen] ? chosen : 'better'
+    const better = j.phase === 'done' ? finalText(j[shownRung], [...j.proposed, ...j.assumed], j.askAgent) : ''
+    const hasThinking = j.phase === 'done' && (j.thinking.verbs || j.thinking.crew.length > 0 || j.thinking.depth.length > 0)
     const forced = await read($, kind)
     const isPicking = await read($, picking)
     const settled = await read($, answers)
@@ -391,8 +433,8 @@ export const register: Register = (on, given) => {
     const edit = (f: (d: Done) => Done) => update($, job, cur => (cur.phase === 'done' ? f(cur) : cur))
     const pick = (i: number, answer: string) =>
       edit(d => ({ ...d, questions: d.questions.map((q, k) => (k === i ? { ...q, picked: answer } : q)) }))
-    // the questions for the agent and the rewrite's own additions: press one to flip whether it joins the result
-    const toggles = (field: 'askAgent' | 'assumed', prefix: string, intro: string) => j.phase === 'done' && j[field].length > 0 && (
+    // the proposals, the questions for the agent and the rewrite's own additions: press one to flip whether it joins the result
+    const toggles = (field: 'proposed' | 'askAgent' | 'assumed', prefix: string, intro: string) => j.phase === 'done' && j[field].length > 0 && (
       <Box flexDirection="column">
         <Text color={MUTED}>{intro}</Text>
         {j[field].map((a, i) => (
@@ -526,7 +568,28 @@ export const register: Register = (on, given) => {
                 </Box>
               )}
             </Box>
-            {j.angles.length === 0 && <Text color={MUTED}>No angle changes this one; it is fine as written.</Text>}
+            {hasThinking && (
+              <Box flexDirection="column">
+                <Button key="reasoning" label={showReasoning ? 'Hide the reasoning' : 'Show the reasoning'} onPress={() => void update($, reasoning, s => !s)}>
+                  <Text color={TEXT}>Reasoning </Text>
+                  <Text color={MUTED}>{showReasoning ? '(press to hide)' : '(press to show)'}</Text>
+                </Button>
+                {showReasoning && j.thinking.verbs && <Text color={TEXT} wrap="wrap">{j.thinking.verbs}</Text>}
+                {showReasoning && j.thinking.crew.map((c, i) => (
+                  <Text key={`crew-${i}`} wrap="wrap">
+                    <Text color={AMBER} bold>{c.field}: </Text>
+                    <Text color={MUTED}>{c.does}</Text>
+                  </Text>
+                ))}
+                {showReasoning && j.thinking.depth.map(d => (
+                  <Text key={`depth-${d.label}`} wrap="wrap">
+                    <Text color={AMBER} bold>{d.label}: </Text>
+                    <Text color={MUTED}>{d.text}</Text>
+                  </Text>
+                ))}
+              </Box>
+            )}
+            {j.angles.length === 0 && !j.outcome && !j.audacious && <Text color={MUTED}>No angle changes this one; it is fine as written.</Text>}
             {j.angles.length > 0 && (
               <Box flexDirection="column">
                 {j.angles.map(a => (
@@ -539,9 +602,29 @@ export const register: Register = (on, given) => {
                 ))}
               </Box>
             )}
+            {(j.outcome || j.audacious) && (
+              <Box flexDirection="column">
+                <Text color={MUTED}>How far do you want to go? Press a step:</Text>
+                {RUNGS.filter(([r]) => j[r]).map(([r, label]) => (
+                  <Button key={`rung-${r}`} label={label} onPress={() => void update($, rung, () => r)}>
+                    <Text wrap="truncate-end">
+                      <Text color={r === shownRung ? AMBER : TEXT} bold={r === shownRung}>{`${r === shownRung ? '(•)' : '( )'} ${label}  `}</Text>
+                      <Text color={MUTED}>{j[r]}</Text>
+                    </Text>
+                  </Button>
+                ))}
+              </Box>
+            )}
             <Box borderStyle="bold" borderColor={MAGENTA} backgroundColor={RESULT_BG} paddingX={1}>
               <Text color={TEXT} wrap="wrap">{better}</Text>
             </Box>
+            {toggles('proposed', 'proposed', 'Proposed by the rewrite, goals and methods to aim for (press to drop):')}
+            {j.needs.length > 0 && (
+              <Box flexDirection="column">
+                <Text color={MUTED}>The agent will need these from you first (not sent):</Text>
+                {j.needs.map((n, i) => <Text key={`need-${i}`} color={TEXT} wrap="wrap">{`- ${n}`}</Text>)}
+              </Box>
+            )}
             {j.questions.length > 0 && (
               <Box flexDirection="column">
                 <Text color={MUTED}>Your answers sharpen it (optional):</Text>
